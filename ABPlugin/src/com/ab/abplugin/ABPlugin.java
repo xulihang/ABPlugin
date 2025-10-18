@@ -55,7 +55,11 @@ public class ABPlugin {
 		this._event = eventName.toLowerCase(BA.cul);
 		this.pluginsDir = pluginsDir;
 		this.AllowedKey=allowedKey;
-		parentClassLoader = (java.net.URLClassLoader)Thread.currentThread().getContextClassLoader();
+		// Compatible with JDK9+ classloader retrieval
+		ClassLoader ctxClassLoader = Thread.currentThread().getContextClassLoader();
+		// In JDK9+, the context classloader might not be a direct URLClassLoader instance
+		parentClassLoader = ctxClassLoader instanceof java.net.URLClassLoader ? 
+			(java.net.URLClassLoader)ctxClassLoader : null;
 		File f = new File(pluginsDir);
 		if (!f.exists()) {
 			try {
@@ -306,7 +310,7 @@ public class ABPlugin {
 			BA.Log("Exception getting nice name for " + def.Name + " - " + e.getTargetException().getMessage());
 		}
 		mPluginIsRunning=false;
-		return def.Name; // 出错时返回文件名
+		return def.Name; // Return filename on error
 	}
 	
 	protected java.lang.reflect.Method GetMethod(ABPluginDefinition def, String methodName) {
@@ -317,10 +321,25 @@ public class ABPlugin {
 		
 		Class<?> clazz = def.objectClass;
 		while (clazz != null) {
-			java.lang.reflect.Method[] methods = clazz.getDeclaredMethods();
+			java.lang.reflect.Method[] methods;
+			try {
+				// In JDK9+, need to handle potential access restrictions
+				methods = clazz.getDeclaredMethods();
+			} catch (SecurityException e) {
+				BA.Log("Security exception accessing methods in class " + clazz.getName() + ": " + e.getMessage());
+				clazz = clazz.getSuperclass();
+				continue;
+			}
+			
 		    for (java.lang.reflect.Method method : methods) {
 		        if (method.getName().equals(methodName)) {
-		            return method;
+		            try {
+		                // Ensure method accessibility, adapt to JDK9+ module system restrictions
+		                method.setAccessible(true);
+		                return method;
+		            } catch (SecurityException e) {
+		                BA.Log("Failed to make method accessible: " + methodName + " in class " + clazz.getName());
+		            }
 		        }
 		    }
 		    clazz = clazz.getSuperclass();
@@ -364,7 +383,9 @@ public class ABPlugin {
 				try {
 					service.awaitTermination(1000, TimeUnit.MILLISECONDS);
 				} catch (InterruptedException e) {
+					// Properly handle thread interruption in JDK9+
 					Thread.currentThread().interrupt();
+					BA.Log("Thread interrupted while waiting for plugin service termination: " + e.getMessage());
 				}
 			}
 			BA.Log("Plugin system stopped");
@@ -396,7 +417,7 @@ public class ABPlugin {
         try {
             // More reliable URL construction
             url = pluginFile.toURI().toURL();
-            // 确保是JAR URL格式
+            // Ensure JAR URL format
             String urlStr = url.toString();
             if (!urlStr.endsWith("!/") && urlStr.endsWith(".jar")) {
                 url = new URL("jar:" + urlStr + "!/");
@@ -452,7 +473,8 @@ public class ABPlugin {
         def.objectClass=null;
         URLClassLoader classLoader = null;
         try {
-            classLoader = new URLClassLoader(urls, parentClassLoader);
+            // Compatible with JDK9+, use system classloader when parentClassLoader is null
+            classLoader = new URLClassLoader(urls, parentClassLoader != null ? parentClassLoader : ClassLoader.getSystemClassLoader());
             
             // Try to find main class (class matching JAR name)
             boolean foundMainClass = false;
@@ -504,10 +526,9 @@ public class ABPlugin {
             // Close resources
             try {
                 if (classLoader != null) {
-                    // In Java 7+, we can use Closeable's close method
-                    if (classLoader instanceof java.io.Closeable) {
-                        ((java.io.Closeable)classLoader).close();
-                    }
+                    // Compatible closing approach for JDK7+ and JDK9+
+                    // In JDK9+, URLClassLoader directly implements Closeable interface
+                    classLoader.close();
                 }
             } catch (IOException e) {
                 BA.Log("Error closing class loader: " + e.getMessage());
