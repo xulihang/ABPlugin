@@ -489,12 +489,35 @@ public class ABPlugin {
                 }
             }
             
-            // If no exact match, try other possible patterns
+            // If no exact match, try to find class with _getnicename method
             if (!foundMainClass && classes.size() > 0) {
-                BA.Log("No exact class match found for " + def.Name + " in " + pluginFile.getAbsolutePath() + ", trying first class");
-                // Use first class as main class
-                mainClassName = classes.get(0);
-                foundMainClass = true;
+                BA.Log("No exact class match found for " + def.Name + " in " + pluginFile.getAbsolutePath() + ", trying to find class with _getnicename method");
+                
+                // Try to find class with _getnicename method
+                for (String className : classes) {
+                    try {
+                        Class<?> tempClass = classLoader.loadClass(className);
+                        // Check if the class has _getnicename method
+                        try {
+                            tempClass.getMethod("_getnicename");
+                            mainClassName = className;
+                            foundMainClass = true;
+                            BA.Log("Found class with _getnicename method: " + className);
+                            break;
+                        } catch (NoSuchMethodException e) {
+                            // This class doesn't have the method, continue searching
+                        }
+                    } catch (ClassNotFoundException e) {
+                        // Class not found, continue searching
+                    }
+                }
+                
+                // If no class with _getnicename found, use first class as main class
+                if (!foundMainClass) {
+                    BA.Log("No class with _getnicename method found, using first class");
+                    mainClassName = classes.get(0);
+                    foundMainClass = true;
+                }
             }
             
             if (foundMainClass && mainClassName != null) {
